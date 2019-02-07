@@ -147,7 +147,7 @@ const unsigned char fctsupported[] =
  * USB/RS232/485 (via RTU protocol).
  */
 class Modbus {
-   private:
+   protected:
     HardwareSerial *port;      //!< Pointer to Serial class object
     SoftwareSerial *softPort;  //!< Pointer to SoftwareSerial class object
     uint8_t u8id;              //!< 0=master, 1..247=slave number
