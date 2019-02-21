@@ -40,7 +40,6 @@
 
 #pragma once
 
-#include <SoftwareSerial.h>
 #include <inttypes.h>
 #include "Arduino.h"
 #include "Print.h"
@@ -149,9 +148,8 @@ const unsigned char fctsupported[] =
 class Modbus {
    protected:
     HardwareSerial *port;      //!< Pointer to Serial class object
-    SoftwareSerial *softPort;  //!< Pointer to SoftwareSerial class object
     uint8_t u8id;              //!< 0=master, 1..247=slave number
-    uint8_t u8serno;           //!< serial port: 0-Serial, 1..3-Serial1..Serial3; 4: use software serial
+    uint8_t u8serno;           //!< serial port: 0-Serial, 1..3-Serial1..Serial3;
     uint8_t u8txenpin;         //!< flow control pin: 0=USB or RS-232 mode, >0=RS-485 mode
     uint8_t u8state;
     uint8_t u8lastError;
@@ -187,7 +185,6 @@ class Modbus {
     Modbus(uint8_t u8id, uint8_t u8serno, uint8_t u8txenpin);
     Modbus(uint8_t u8id);
     void begin(long u32speed);
-    void begin(SoftwareSerial *sPort, long u32speed);
     //void begin(long u32speed, uint8_t u8config);
     void begin();
     void setTimeOut(uint16_t u16timeOut);         //!<write communication watch-dog timer
