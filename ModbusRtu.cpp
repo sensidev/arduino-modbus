@@ -221,15 +221,9 @@ uint8_t Modbus::getState() {
 
 /**
  * Get the last error in the protocol processor
- *
- * @returnreturn   NO_REPLY = 255      Time-out
- * @return   EXC_FUNC_CODE = 1   Function code not available
- * @return   EXC_ADDR_RANGE = 2  Address beyond available space for Modbus registers
- * @return   EXC_REGS_QUANT = 3  Coils or registers number beyond the available space
- * @ingroup buffer
  */
-uint8_t Modbus::getLastError() {
-    return u8lastError;
+ModbusError Modbus::getLastError() {
+    return lastError;
 }
 
 /**
@@ -318,7 +312,7 @@ int8_t Modbus::query(modbus_t telegram) {
 
     sendTxBuffer();
     u8state = COM_WAITING;
-    u8lastError = 0;
+    lastError = ModbusError::BUS_OK;
     return 0;
 }
 
@@ -331,49 +325,45 @@ int8_t Modbus::query(modbus_t telegram) {
  *
  * Any incoming data would be redirected to au16regs pointer,
  * as defined in its modbus_t query telegram.
- *
- * @params	nothing
- * @return errors counter
- * @ingroup loop
  */
-int8_t Modbus::poll() {
+void Modbus::masterPoll() {
     // check if there is any incoming frame
-    uint8_t u8current;
-    if (u8serno < 4)
-        u8current = port->available();
+    uint8_t u8current = port->available();
 
     if ((unsigned long)(millis() - u32timeOut) > (unsigned long)u16timeOut) {
         u8state = COM_IDLE;
-        u8lastError = NO_REPLY;
+        lastError = NO_REPLY;
         u16errCnt++;
-        return 0;
+        return;
     }
 
-    if (u8current == 0) return 0;
+    if (u8current == 0) return;
 
     // check T35 after frame end or still no frame end
     if (u8current != u8lastRec) {
         u8lastRec = u8current;
         u32time = millis();
-        return 0;
+        return;
     }
-    if ((unsigned long)(millis() - u32time) < (unsigned long)T35) return 0;
 
-    // transfer Serial buffer frame to auBuffer
+    if ((unsigned long)(millis() - u32time) < (unsigned long)T35) return;
+
+    // transfer Serial buffer frame to a8Buffer
     u8lastRec = 0;
-    int8_t i8state = getRxBuffer();
-    if (i8state < 6)  //7 was incorrect for functions 1 and 2 the smallest frame could be 6 bytes long
-    {
+    lastError = getRxBuffer();
+
+    if (u8BufferSize < 6) {
+        // 7 was incorrect for functions 1 and 2 the smallest frame could be 6 bytes long
         u8state = COM_IDLE;
         u16errCnt++;
-        return i8state;
+        return;
     }
 
     // validate message: id, CRC, FCT, exception
-    uint8_t u8exception = validateAnswer();
-    if (u8exception != 0) {
+    lastError = validateAnswer();
+    if (ModbusError::BUS_OK != lastError) {
         u8state = COM_IDLE;
-        return u8exception;
+        return;
     }
 
     // process answer
@@ -397,8 +387,9 @@ int8_t Modbus::poll() {
         default:
             break;
     }
+
     u8state = COM_IDLE;
-    return u8BufferSize;
+    lastError = ModbusError::BUS_OK;
 }
 
 /**
@@ -411,76 +402,76 @@ int8_t Modbus::poll() {
  *
  * @param *regs  register table for communication exchange
  * @param u8size  size of the register table
- * @return 0 if no query, 1..4 if communication error, >4 if correct query processed
  * @ingroup loop
  */
-int8_t Modbus::poll(uint16_t *regs, uint8_t u8size) {
+void Modbus::slavePoll(uint16_t *regs, uint8_t u8size) {
     au16regs = regs;
     u8regsize = u8size;
     uint8_t u8current;
 
     // check if there is any incoming frame
-    if (u8serno < 4)
-        u8current = port->available();
+    u8current = port->available();
 
-    if (u8current == 0) return 0;
+    if (u8current == 0) return;
 
     // check T35 after frame end or still no frame end
     if (u8current != u8lastRec) {
         u8lastRec = u8current;
         u32time = millis();
-        return 0;
+        return;
     }
-    if ((unsigned long)(millis() - u32time) < (unsigned long)T35) return 0;
+    if ((unsigned long)(millis() - u32time) < (unsigned long)T35) return;
 
     u8lastRec = 0;
-    int8_t i8state = getRxBuffer();
-    u8lastError = i8state;
-    if (i8state < 7) return i8state;
+    lastError = getRxBuffer();
+    if (u8BufferSize < 7) {
+        return;
+    }
 
     // check slave id
-    if (au8Buffer[ID] != u8id) return 0;
+    if (au8Buffer[ID] != u8id) {
+        lastError = ModbusError::ERR_SLAVE_ID_MISMATCH;
+        return;
+    }
 
     // validate message: CRC, FCT, address and size
-    uint8_t u8exception = validateRequest();
-    if (u8exception > 0) {
-        if (u8exception != NO_REPLY) {
-            buildException(u8exception);
+    lastError = validateRequest();
+    if (ModbusError::BUS_OK != lastError) {
+        if (ModbusError::NO_REPLY != lastError) {
+            buildException(lastError);
             sendTxBuffer();
         }
-        u8lastError = u8exception;
-        return u8exception;
+        return;
     }
 
     u32timeOut = millis();
-    u8lastError = 0;
+    lastError = ModbusError::BUS_OK;
 
     // process message
     switch (au8Buffer[FUNC]) {
         case MB_FC_READ_COILS:
         case MB_FC_READ_DISCRETE_INPUT:
-            return process_FC1(regs, u8size);
+            process_FC1(regs, u8size);
             break;
         case MB_FC_READ_INPUT_REGISTER:
         case MB_FC_READ_REGISTERS:
-            return process_FC3(regs, u8size);
+            process_FC3(regs, u8size);
             break;
         case MB_FC_WRITE_COIL:
-            return process_FC5(regs, u8size);
+            process_FC5(regs, u8size);
             break;
         case MB_FC_WRITE_REGISTER:
-            return process_FC6(regs, u8size);
+            process_FC6(regs, u8size);
             break;
         case MB_FC_WRITE_MULTIPLE_COILS:
-            return process_FC15(regs, u8size);
+            process_FC15(regs, u8size);
             break;
         case MB_FC_WRITE_MULTIPLE_REGISTERS:
-            return process_FC16(regs, u8size);
+            process_FC16(regs, u8size);
             break;
         default:
             break;
     }
-    return i8state;
 }
 
 /* _____PRIVATE FUNCTIONS_____________________________________________________ */
@@ -493,14 +484,6 @@ void Modbus::init(uint8_t u8id, uint8_t u8serno, uint8_t u8txenpin) {
     this->u32overTime = 0;
 }
 
-void Modbus::init(uint8_t u8id) {
-    this->u8id = u8id;
-    this->u8serno = 4;
-    this->u8txenpin = 0;
-    this->u16timeOut = 1000;
-    this->u32overTime = 0;
-}
-
 /**
  * @brief
  * This method moves Serial buffer data to the Modbus au8Buffer.
@@ -508,26 +491,27 @@ void Modbus::init(uint8_t u8id) {
  * @return buffer size if OK, ERR_BUFF_OVERFLOW if u8BufferSize >= MAX_BUFFER
  * @ingroup buffer
  */
-int8_t Modbus::getRxBuffer() {
+ModbusError Modbus::getRxBuffer() {
     boolean bBuffOverflow = false;
 
     if (u8txenpin > 1) digitalWrite(u8txenpin, LOW);
 
     u8BufferSize = 0;
-    if (u8serno < 4)
-        while (port->available()) {
-            au8Buffer[u8BufferSize] = port->read();
-            u8BufferSize++;
 
-            if (u8BufferSize >= MAX_BUFFER) bBuffOverflow = true;
-        }
+    while (port->available()) {
+        au8Buffer[u8BufferSize] = port->read();
+        u8BufferSize++;
+
+        if (u8BufferSize >= MAX_BUFFER) bBuffOverflow = true;
+    }
     u16InCnt++;
 
     if (bBuffOverflow) {
         u16errCnt++;
-        return ERR_BUFF_OVERFLOW;
+        return ModbusError::ERR_BUFF_OVERFLOW;
     }
-    return u8BufferSize;
+
+    return ModbusError::BUS_OK;
 }
 
 /**
@@ -558,22 +542,19 @@ void Modbus::sendTxBuffer() {
     }
 
     // transfer buffer to serial line
-    if (u8serno < 4)
-        port->write(au8Buffer, u8BufferSize);
+    port->write(au8Buffer, u8BufferSize);
 
     if (u8txenpin > 1) {
         // must wait transmission end before changing pin state
-        if (u8serno < 4)
-            port->flush();
+        port->flush();
         // return RS485 transceiver to receive mode
         volatile uint32_t u32overTimeCountDown = u32overTime;
         while (u32overTimeCountDown-- > 0)
             ;
         digitalWrite(u8txenpin, LOW);
     }
-    if (u8serno < 4)
-        while (port->read() >= 0)
-            ;
+    while (port->read() >= 0)
+        ;
 
     u8BufferSize = 0;
 
@@ -619,13 +600,13 @@ uint16_t Modbus::calcCRC(uint8_t u8length) {
  * @return 0 if OK, EXCEPTION if anything fails
  * @ingroup buffer
  */
-uint8_t Modbus::validateRequest() {
+ModbusError Modbus::validateRequest() {
     // check message crc vs calculated crc
     uint16_t u16MsgCRC =
         ((au8Buffer[u8BufferSize - 2] << 8) | au8Buffer[u8BufferSize - 1]);  // combine the crc Low & High bytes
     if (calcCRC(u8BufferSize - 2) != u16MsgCRC) {
         u16errCnt++;
-        return NO_REPLY;
+        return ModbusError::ERR_BAD_CRC;
     }
 
     // check fct code
@@ -638,7 +619,7 @@ uint8_t Modbus::validateRequest() {
     }
     if (!isSupported) {
         u16errCnt++;
-        return EXC_FUNC_CODE;
+        return ModbusError::EXC_FUNC_CODE;
     }
 
     // check start address & nb range
@@ -672,7 +653,7 @@ uint8_t Modbus::validateRequest() {
             if (u8regs > u8regsize) return EXC_ADDR_RANGE;
             break;
     }
-    return 0;  // OK, no exception code thrown
+    return ModbusError::BUS_OK;
 }
 
 /**
@@ -682,19 +663,19 @@ uint8_t Modbus::validateRequest() {
  * @return 0 if OK, EXCEPTION if anything fails
  * @ingroup buffer
  */
-uint8_t Modbus::validateAnswer() {
+ModbusError Modbus::validateAnswer() {
     // check message crc vs calculated crc
     uint16_t u16MsgCRC =
         ((au8Buffer[u8BufferSize - 2] << 8) | au8Buffer[u8BufferSize - 1]);  // combine the crc Low & High bytes
     if (calcCRC(u8BufferSize - 2) != u16MsgCRC) {
         u16errCnt++;
-        return NO_REPLY;
+        return ModbusError::ERR_BAD_CRC;
     }
 
     // check exception
     if ((au8Buffer[FUNC] & 0x80) != 0) {
         u16errCnt++;
-        return ERR_EXCEPTION;
+        return ModbusError::ERR_EXCEPTION;
     }
 
     // check fct code
@@ -707,10 +688,10 @@ uint8_t Modbus::validateAnswer() {
     }
     if (!isSupported) {
         u16errCnt++;
-        return EXC_FUNC_CODE;
+        return ModbusError::EXC_FUNC_CODE;
     }
 
-    return 0;  // OK, no exception code thrown
+    return ModbusError::BUS_OK;
 }
 
 /**

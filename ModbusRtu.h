@@ -109,21 +109,21 @@ enum COM_STATES {
 
 };
 
-enum ERR_LIST {
+typedef enum {
+    BUS_OK = 0,
     ERR_NOT_MASTER = -1,
     ERR_POLLING = -2,
     ERR_BUFF_OVERFLOW = -3,
     ERR_BAD_CRC = -4,
-    ERR_EXCEPTION = -5
-};
-
-enum {
+    ERR_EXCEPTION = -5,
+    ERR_SLAVE_ID_MISMATCH = -6,
+    ERR_NO_PARAMETER = -7,
     NO_REPLY = 255,
     EXC_FUNC_CODE = 1,
     EXC_ADDR_RANGE = 2,
     EXC_REGS_QUANT = 3,
     EXC_EXECUTE = 4
-};
+} ModbusError;
 
 const unsigned char fctsupported[] =
     {
@@ -147,12 +147,12 @@ const unsigned char fctsupported[] =
  */
 class Modbus {
    protected:
-    HardwareSerial *port;      //!< Pointer to Serial class object
-    uint8_t u8id;              //!< 0=master, 1..247=slave number
-    uint8_t u8serno;           //!< serial port: 0-Serial, 1..3-Serial1..Serial3;
-    uint8_t u8txenpin;         //!< flow control pin: 0=USB or RS-232 mode, >0=RS-485 mode
+    HardwareSerial *port;  //!< Pointer to Serial class object
+    uint8_t u8id;          //!< 0=master, 1..247=slave number
+    uint8_t u8serno;       //!< serial port: 0-Serial, 1..3-Serial1..Serial3;
+    uint8_t u8txenpin;     //!< flow control pin: 0=USB or RS-232 mode, >0=RS-485 mode
     uint8_t u8state;
-    uint8_t u8lastError;
+    ModbusError lastError;
     uint8_t au8Buffer[MAX_BUFFER];
     uint8_t u8BufferSize;
     uint8_t u8lastRec;
@@ -165,10 +165,10 @@ class Modbus {
     void init(uint8_t u8id, uint8_t u8serno, uint8_t u8txenpin);
     void init(uint8_t u8id);
     void sendTxBuffer();
-    int8_t getRxBuffer();
+    ModbusError getRxBuffer();
     uint16_t calcCRC(uint8_t u8length);
-    uint8_t validateAnswer();
-    uint8_t validateRequest();
+    ModbusError validateAnswer();
+    ModbusError validateRequest();
     void get_FC1();
     void get_FC3();
     int8_t process_FC1(uint16_t *regs, uint8_t u8size);
@@ -187,19 +187,19 @@ class Modbus {
     void begin(long u32speed);
     //void begin(long u32speed, uint8_t u8config);
     void begin();
-    void setTimeOut(uint16_t u16timeOut);         //!<write communication watch-dog timer
-    uint16_t getTimeOut();                        //!<get communication watch-dog timer value
-    boolean getTimeOutState();                    //!<get communication watch-dog timer state
-    int8_t query(modbus_t telegram);              //!<only for master
-    int8_t poll();                                //!<cyclic poll for master
-    int8_t poll(uint16_t *regs, uint8_t u8size);  //!<cyclic poll for slave
-    uint16_t getInCnt();                          //!<number of incoming messages
-    uint16_t getOutCnt();                         //!<number of outcoming messages
-    uint16_t getErrCnt();                         //!<error counter
-    uint8_t getID();                              //!<get slave ID between 1 and 247
+    void setTimeOut(uint16_t u16timeOut);            //!<write communication watch-dog timer
+    uint16_t getTimeOut();                           //!<get communication watch-dog timer value
+    boolean getTimeOutState();                       //!<get communication watch-dog timer state
+    int8_t query(modbus_t telegram);                 //!<only for master
+    void masterPoll();                               //!<cyclic poll for master
+    void slavePoll(uint16_t *regs, uint8_t u8size);  //!<cyclic poll for slave
+    uint16_t getInCnt();                             //!<number of incoming messages
+    uint16_t getOutCnt();                            //!<number of outcoming messages
+    uint16_t getErrCnt();                            //!<error counter
+    uint8_t getID();                                 //!<get slave ID between 1 and 247
     uint8_t getState();
-    uint8_t getLastError();    //!<get last error message
-    void setID(uint8_t u8id);  //!<write new ID for the slave
+    ModbusError getLastError();  //!<get last error message
+    void setID(uint8_t u8id);    //!<write new ID for the slave
     void setTxendPinOverTime(uint32_t u32overTime);
     void end();  //!<finish any communication and release serial communication port
 };
